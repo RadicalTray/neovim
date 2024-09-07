@@ -1,0 +1,106 @@
+diff --git a/src/nvim/drawscreen.c b/src/nvim/drawscreen.c
+index 025d8fe72..26f4d786b 100644
+--- a/src/nvim/drawscreen.c
++++ b/src/nvim/drawscreen.c
+@@ -1349,9 +1349,9 @@ static schar_T get_corner_sep_connector(win_T *wp, WindowCorner corner)
+ /// Draw separator connecting characters on the corners of window "wp"
+ static void draw_sep_connectors_win(win_T *wp)
+ {
+-  // Don't draw separator connectors unless global statusline is enabled and the window has
++  // Don't draw separator connectors unless global statusline is enabled or statusline is disabled, and the window has
+   // either a horizontal or vertical separator
+-  if (global_stl_height() == 0 || !(wp->w_hsep_height == 1 || wp->w_vsep_width == 1)) {
++  if ((global_stl_height() == 0 && p_ls != -1) || !(wp->w_hsep_height == 1 || wp->w_vsep_width == 1)) {
+     return;
+   }
+ 
+diff --git a/src/nvim/window.c b/src/nvim/window.c
+index f61485ccb..3f8c8e5e1 100644
+--- a/src/nvim/window.c
++++ b/src/nvim/window.c
+@@ -1419,7 +1419,7 @@ win_T *win_split_ins(int size, int flags, win_T *new_wp, int dir, frame_T *to_fl
+     frame_fix_width(oldwin);
+     frame_fix_width(wp);
+   } else {
+-    const bool is_stl_global = global_stl_height() > 0;
++    const bool is_stl_global_or_off = global_stl_height() > 0 || p_ls == -1;
+     // width and column of new window is same as current window
+     if (toplevel) {
+       wp->w_wincol = 0;
+@@ -1437,14 +1437,14 @@ win_T *win_split_ins(int size, int flags, win_T *new_wp, int dir, frame_T *to_fl
+     win_new_height(wp, new_size);
+     const int old_status_height = oldwin->w_status_height;
+     if (before) {
+-      wp->w_hsep_height = is_stl_global ? 1 : 0;
++      wp->w_hsep_height = is_stl_global_or_off ? 1 : 0;
+     } else {
+       wp->w_hsep_height = oldwin->w_hsep_height;
+-      oldwin->w_hsep_height = is_stl_global ? 1 : 0;
++      oldwin->w_hsep_height = is_stl_global_or_off ? 1 : 0;
+     }
+     if (toplevel) {
+       int new_fr_height = curfrp->fr_height - new_size;
+-      if (is_stl_global) {
++      if (is_stl_global_or_off) {
+         if (flags & WSP_BOT) {
+           frame_add_hsep(curfrp);
+         } else {
+@@ -1465,7 +1465,7 @@ win_T *win_split_ins(int size, int flags, win_T *new_wp, int dir, frame_T *to_fl
+ 
+     if (before) {       // new window above current one
+       wp->w_winrow = oldwin->w_winrow;
+-      if (is_stl_global) {
++      if (is_stl_global_or_off) {
+         wp->w_status_height = 0;
+         oldwin->w_winrow += wp->w_height + 1;
+       } else {
+@@ -1473,7 +1473,7 @@ win_T *win_split_ins(int size, int flags, win_T *new_wp, int dir, frame_T *to_fl
+         oldwin->w_winrow += wp->w_height + STATUS_HEIGHT;
+       }
+     } else {            // new window below current one
+-      if (is_stl_global) {
++      if (is_stl_global_or_off) {
+         wp->w_winrow = oldwin->w_winrow + oldwin->w_height + 1;
+         wp->w_status_height = 0;
+       } else {
+@@ -2268,7 +2268,7 @@ static void win_equal_rec(win_T *next_curwin, bool current, frame_T *topfr, int
+       // Compute maximum number of windows vertically in this frame.
+       int n = frame_minheight(topfr, NOWIN);
+       // add one for the bottom window if it doesn't have a statusline or separator
+-      if (row + height >= cmdline_row && p_ls == 0) {
++      if (row + height >= cmdline_row && (p_ls == 0 || p_ls == -1)) {
+         extra_sep = STATUS_HEIGHT;
+       } else if (global_stl_height() > 0) {
+         extra_sep = 1;
+@@ -6928,11 +6928,12 @@ static void last_status_rec(frame_T *fr, bool statusline, bool is_stl_global)
+   if (fr->fr_layout == FR_LEAF) {
+     win_T *wp = fr->fr_win;
+     bool is_last = is_bottom_win(wp);
++    const bool is_stl_global_or_off = is_stl_global || p_ls == -1;
+ 
+     if (is_last) {
+-      if (wp->w_status_height != 0 && (!statusline || is_stl_global)) {
++      if (wp->w_status_height != 0 && (!statusline || is_stl_global_or_off)) {
+         win_remove_status_line(wp, false);
+-      } else if (wp->w_status_height == 0 && !is_stl_global && statusline) {
++      } else if (wp->w_status_height == 0 && !is_stl_global_or_off && statusline) {
+         // Add statusline to window if needed
+         wp->w_status_height = STATUS_HEIGHT;
+         if (!resize_frame_for_status(fr)) {
+@@ -6944,12 +6945,12 @@ static void last_status_rec(frame_T *fr, bool statusline, bool is_stl_global)
+       if (abs(wp->w_height - wp->w_prev_height) == 1) {
+         wp->w_prev_height = wp->w_height;
+       }
+-    } else if (wp->w_status_height != 0 && is_stl_global) {
+-      // If statusline is global and the window has a statusline, replace it with a horizontal
++    } else if (wp->w_status_height != 0 && is_stl_global_or_off) {
++      // If statusline is global or off, and the window has a statusline, replace it with a horizontal
+       // separator
+       win_remove_status_line(wp, true);
+-    } else if (wp->w_status_height == 0 && !is_stl_global) {
+-      // If statusline isn't global and the window doesn't have a statusline, re-add it
++    } else if (wp->w_status_height == 0 && !is_stl_global_or_off) {
++      // If statusline isn't global nor off, and the window doesn't have a statusline, re-add it
+       wp->w_status_height = STATUS_HEIGHT;
+       wp->w_hsep_height = 0;
+       comp_col();
